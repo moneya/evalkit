@@ -2,7 +2,7 @@
 name = "evalkit"
 version = "0.1.0"
 description = "Prompt and agent evals with cost regression as a first-class failure."
-readme = "README.md"
+readme = "Readme.md"
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
