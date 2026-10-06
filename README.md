@@ -29,14 +29,150 @@ $ evalkit run examples/support_triage.yaml --baseline runs/main.json
 ========================================================================
 ```
 
-Quality went **up** and the build still fails: the same answers now cost 10x.\nA quality-only harness merges this. Reproduce it offline with\n`examples/regression_v1.yaml` vs `regression_v2.yaml` — no API key needed.
+Quality went **up** and the build still fails: the same answers now cost 10x.
+A quality-only harness merges this. Reproduce it offline with
+`examples/regression_v1.yaml` vs `regression_v2.yaml` — no API key needed.
 
 ---
 
-## Install
+## Installation
+
+**Requirements:** Python ≥ 3.10 (verified on 3.10 and 3.14). Two dependencies,
+`pyyaml` and `httpx`. No API key needed to install, run the test suite, or try
+the offline demo.
+
+### Option 1 — just use the CLI (recommended)
+
+Installs `evalkit` on your PATH in an isolated environment, without touching
+your project's packages:
 
 ```bash
-uv venv && uv pip install -e ".[dev]"
+# with uv (https://docs.astral.sh/uv/)
+uv tool install git+https://github.com/moneya/evalkit.git
+
+# or with pipx
+pipx install git+https://github.com/moneya/evalkit.git
+
+evalkit --version          # evalkit 0.1.0
+```
+
+### Option 2 — add it to a project
+
+```bash
+# uv
+uv add git+https://github.com/moneya/evalkit.git
+
+# pip, into an existing virtualenv
+pip install git+https://github.com/moneya/evalkit.git
+```
+
+Pin a commit for reproducible CI — evals that silently change behaviour defeat
+the point:
+
+```bash
+uv add "git+https://github.com/moneya/evalkit.git@40ac1da"
+```
+
+### Option 3 — clone it, to hack on it or run the examples
+
+The example suites and the stub server live in the repo, so clone if you want
+them:
+
+```bash
+git clone https://github.com/moneya/evalkit.git
+cd evalkit
+
+# with uv — creates .venv and installs dev extras
+uv venv
+uv pip install -e ".[dev]"
+
+# or with stdlib venv + pip
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+```
+
+### Verify the install
+
+```bash
+# 1. is the CLI wired up?
+evalkit --version                  # evalkit 0.1.0
+
+# 2. is the bundled pricing data present?
+evalkit pricing claude-haiku-4-5   # prints rates + a verification date
+
+# 3. does a real eval run? (clone only — needs examples/)
+evalkit run examples/offline_demo.yaml      # 5/5 passed
+
+# 4. the test suite (clone + dev extras only)
+pytest -q                                   # 117 passed
+```
+
+If you installed with `uv venv` and did **not** activate it, prefix the commands
+with the venv path — `.venv/bin/evalkit`, `.venv/bin/pytest` — or run
+`source .venv/bin/activate` first.
+
+Expected output from step 3:
+
+```
+  running offline-demo  (5 cases x 1 model(s))
+
+  PASS  json-shape [echo-1]        0ms   $0   14tok
+  PASS  fenced-json [echo-1]       0ms   $0   22tok
+  PASS  text-checks [echo-1]       0ms   $0   15tok
+  PASS  template-vars [echo-1]     0ms   $0   10tok
+  PASS  budget-checks [echo-1]     0ms   $0    1tok
+
+  cases      5/5 passed  (100.0%)
+  cost       $0.000000   (89 tokens)
+```
+
+Case lines stream in completion order, so yours may be shuffled — that's normal
+under concurrency. Saved artifacts are always sorted back into suite order so
+`compare` diffs stay readable. What matters is `5/5 passed`.
+
+If that works the install is sound: it exercises suite loading, the provider
+layer, all 16 assertions, and cost arithmetic.
+
+### Add credentials when you want real models
+
+Only needed for hosted providers; skip entirely for local models and the offline
+demo.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # for claude-* models
+export OPENAI_API_KEY=sk-...            # for gpt-*, o3, o4 models
+```
+
+A missing key is **not** a crash — the affected cases fail with a readable
+message and the rest of the suite still runs:
+
+```
+FAIL  auth-401 [claude-haiku-4-5]
+      error: ProviderError: ANTHROPIC_API_KEY is not set — export it,
+             or run with --provider echo.
+```
+
+For self-hosted models (vLLM, Ollama, LM Studio) no key is required at all —
+see [Custom endpoints](#custom-endpoints-self-hosted-local-gateways).
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `ERROR: File "setup.py" or "setup.cfg" not found` | Python 3.9 or an old pip. evalkit needs ≥ 3.10; upgrade pip (`pip install -U pip`) or use `uv`. |
+| `evalkit: command not found` after installing | The venv isn't active (`source .venv/bin/activate`), or use `.venv/bin/evalkit` directly. For a global CLI use `uv tool install` / `pipx`. |
+| `cannot infer provider for model '...'` | A self-hosted or gateway model. Set `provider: openai_compatible` plus `base_url:` in the suite, or pass `--base-url`. |
+| `... is not in the pricing table` | Expected for self-hosted models. Either drop the `max_cost` assertion or add prices — see [Pricing](#pricing). |
+| `404: Not Found (HTML response — check base_url)` | `base_url` points at a web root, not the API. It should end in `/v1`, e.g. `http://localhost:8000/v1`. |
+| `404: model 'X' not found` | The server is reachable but hasn't got that model. For Ollama, `ollama pull X` first; for vLLM, check the `--model` it was launched with. |
+| `Connection refused` on `localhost:11434` / `:8000` | The local model server isn't running. Start Ollama/vLLM, or test the plumbing with `python3 tests/fake_openai_server.py 8731`. |
+
+### Uninstall
+
+```bash
+uv tool uninstall evalkit     # or: pipx uninstall evalkit
+pip uninstall evalkit         # project installs
 ```
 
 ## Try it with no API key
@@ -46,6 +182,14 @@ testable with zero credentials:
 
 ```bash
 evalkit run examples/offline_demo.yaml
+```
+
+Want a real local model instead? The repo ships a stub OpenAI-compatible server
+so you can exercise the full HTTP path without a GPU:
+
+```bash
+python3 tests/fake_openai_server.py 8731 &
+evalkit run examples/local_model.yaml --base-url http://127.0.0.1:8731/v1
 ```
 
 ## Write a suite
