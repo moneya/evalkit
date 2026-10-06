@@ -30,11 +30,31 @@ def _cmd_run(args: argparse.Namespace) -> int:
         suite.models = args.model
     if args.provider:
         suite.provider = args.provider
+    if args.base_url:
+        suite.base_url = args.base_url
+    if args.api_key_env:
+        suite.api_key_env = args.api_key_env
+    if args.header:
+        for h in args.header:
+            if ":" not in h:
+                print(f"error: --header expects 'Name: value', got {h!r}", file=sys.stderr)
+                return 2
+            k, v = h.split(":", 1)
+            suite.extra_headers[k.strip()] = v.strip()
+    if args.timeout:
+        suite.timeout = args.timeout
+    if args.max_retries:
+        suite.max_retries = args.max_retries
     if args.dry_run:
         suite.provider = "echo"
         suite.models = ["echo-1"]
+        suite.base_url = None
 
-    print(f"\n  running {suite.name}  ({len(suite.cases)} cases x {len(suite.models)} model(s))\n")
+    where = f" via {suite.base_url}" if suite.base_url else ""
+    print(
+        f"\n  running {suite.name}  "
+        f"({len(suite.cases)} cases x {len(suite.models)} model(s)){where}\n"
+    )
 
     try:
         run = run_suite(
@@ -126,9 +146,29 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     from .assertions import available
     from .providers import default_model_for
 
+    from .providers import known_aliases, known_providers
+
     print("providers")
-    for name in ("anthropic", "openai", "echo"):
-        print(f"  {name:<12} default model: {default_model_for(name)}")
+    for name in known_providers():
+        dm = default_model_for(name) or "(must be specified)"
+        print(f"  {name:<20} default model: {dm}")
+
+    print("\naliases (all map to openai_compatible, most with a default base_url)")
+    alias_hints = {
+        "vllm": "http://localhost:8000/v1",
+        "ollama": "http://localhost:11434/v1",
+        "lmstudio": "http://localhost:1234/v1",
+        "lm_studio": "http://localhost:1234/v1",
+        "llamacpp": "http://localhost:8080/v1",
+        "openrouter": "https://openrouter.ai/api/v1 (OPENROUTER_API_KEY)",
+        "together": "https://api.together.xyz/v1 (TOGETHER_API_KEY)",
+        "groq": "https://api.groq.com/openai/v1 (GROQ_API_KEY)",
+        "fireworks": "https://api.fireworks.ai/inference/v1 (FIREWORKS_API_KEY)",
+        "deepinfra": "https://api.deepinfra.com/v1/openai (DEEPINFRA_API_KEY)",
+    }
+    for alias in sorted(known_aliases()):
+        hint = alias_hints.get(alias, "base_url required")
+        print(f"  {alias:<20} {hint}")
     print("\nassertions")
     for a in available():
         print(f"  - {a}")
@@ -176,7 +216,20 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="run a suite")
     r.add_argument("suite", help="path to a suite YAML file")
     r.add_argument("--model", action="append", help="override models (repeatable)")
-    r.add_argument("--provider", help="force a provider (anthropic|openai|echo)")
+    r.add_argument("--provider",
+                   help="force a provider: anthropic|openai|openai_compatible|echo, "
+                        "or an alias (vllm, ollama, lmstudio, openrouter, together, groq)")
+    r.add_argument("--base-url",
+                   help="custom endpoint, e.g. http://localhost:8000/v1 (vLLM) "
+                        "or https://openrouter.ai/api/v1")
+    r.add_argument("--api-key-env",
+                   help="env var holding the key for a custom endpoint "
+                        "(e.g. OPENROUTER_API_KEY)")
+    r.add_argument("--header", action="append", metavar="'Name: value'",
+                   help="extra request header, repeatable (gateways, routing hints)")
+    r.add_argument("--timeout", type=float, help="per-request timeout seconds")
+    r.add_argument("--max-retries", type=int,
+                   help="retry attempts per request on 429/5xx/transport errors")
     r.add_argument("--dry-run", action="store_true",
                    help="offline: use the echo provider, no API keys, no cost")
     r.add_argument("-c", "--concurrency", type=int, default=4)

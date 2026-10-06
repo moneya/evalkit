@@ -1,0 +1,59 @@
+# Custom / self-hosted endpoint examples.
+#
+# Any OpenAI-shaped /chat/completions server works. Pick a provider line below,
+# or override from the CLI without editing anything:
+#
+#   evalkit run examples/local_model.yaml \
+#     --provider openai_compatible \
+#     --base-url http://localhost:8000/v1 \
+#     --model mistralai/Mistral-7B-Instruct-v0.3
+#
+# Aliases carry a default base_url, so these are equivalent to the above:
+#   provider: vllm         ->  http://localhost:8000/v1
+#   provider: ollama       ->  http://localhost:11434/v1
+#   provider: lmstudio     ->  http://localhost:1234/v1
+#   provider: llamacpp     ->  http://localhost:8080/v1
+#   provider: openrouter   ->  https://openrouter.ai/api/v1   (OPENROUTER_API_KEY)
+#   provider: together     ->  https://api.together.xyz/v1    (TOGETHER_API_KEY)
+#   provider: groq         ->  https://api.groq.com/openai/v1 (GROQ_API_KEY)
+#
+# Self-hosted models are normally absent from the pricing table, so evalkit
+# reports them as unpriced (cost "n/a") rather than inventing a number. To gate
+# on cost for a local model, add your own cost-per-1M figures:
+#
+#   cat > evalkit-pricing.json <<'JSON'
+#   {"openai_compatible": {"local-llama-3-8b": {"input": 0.0, "output": 0.0}}}
+#   JSON
+#
+name: local-model-smoke
+provider: vllm                    # alias: defaults base_url to localhost:8000/v1
+# base_url: http://localhost:8000/v1   # uncomment to point elsewhere
+# api_key_env: MY_GATEWAY_KEY          # only if your server requires auth
+# extra_headers:                       # gateways / routing hints
+#   X-Title: evalkit
+# timeout: 120
+# max_retries: 3
+
+models: [mistralai/Mistral-7B-Instruct-v0.3]
+max_tokens: 200
+temperature: 0
+
+cases:
+  - id: json-only
+    system: 'Reply with JSON only: {"category": "...", "severity": "low|medium|high"}'
+    prompt: "Client reports 401 invalid API key on every request."
+    assert:
+      - json_valid: true
+      - json_keys: [category, severity]
+
+  - id: no-preamble
+    prompt: "Answer with a single word: is 401 an authentication error? yes or no"
+    assert:
+      - one_of: ["yes", "no", "Yes", "No", "yes.", "Yes."]
+      - max_latency_ms: 10000
+
+  - id: follows-length-limit
+    prompt: "Summarize HTTP 429 in under 20 words."
+    assert:
+      - word_count: {max: 30}
+      - not_contains: "As an AI"

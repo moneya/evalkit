@@ -12,7 +12,12 @@ from typing import Any
 import yaml
 
 from .assertions import run_assertions
-from .providers import ProviderError, get_provider, infer_provider
+from .providers import (
+    ProviderError,
+    get_provider,
+    infer_provider,
+    resolve_provider_name,
+)
 from .types import CaseResult, Completion, RunResult, Usage
 
 
@@ -39,6 +44,22 @@ class Suite:
     provider: str | None = None
     thresholds: dict[str, float] = field(default_factory=dict)
     path: Path | None = None
+    # custom endpoint support
+    base_url: str | None = None
+    api_key_env: str | None = None
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    timeout: float | None = None
+    max_retries: int | None = None
+
+    def connection(self) -> dict[str, Any]:
+        """Transport options handed to the provider constructor."""
+        return {
+            "base_url": self.base_url,
+            "api_key_env": self.api_key_env,
+            "extra_headers": self.extra_headers or None,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+        }
 
 
 class SuiteError(ValueError):
@@ -88,6 +109,10 @@ def load_suite(path: str | Path) -> Suite:
     if dupes:
         raise SuiteError(f"{p}: duplicate case ids: {sorted(dupes)}")
 
+    headers = doc.get("extra_headers") or doc.get("headers") or {}
+    if headers and not isinstance(headers, dict):
+        raise SuiteError(f"{p}: `extra_headers` must be a mapping")
+
     return Suite(
         name=doc.get("name") or p.stem,
         cases=cases,
@@ -99,6 +124,11 @@ def load_suite(path: str | Path) -> Suite:
         provider=doc.get("provider"),
         thresholds=doc.get("thresholds") or {},
         path=p,
+        base_url=doc.get("base_url"),
+        api_key_env=doc.get("api_key_env"),
+        extra_headers={str(k): str(v) for k, v in headers.items()},
+        timeout=float(doc["timeout"]) if doc.get("timeout") is not None else None,
+        max_retries=int(doc["max_retries"]) if doc.get("max_retries") is not None else None,
     )
 
 
@@ -119,8 +149,14 @@ def render_prompt(suite: Suite, case: Case) -> str:
 
 
 def _run_one(suite: Suite, case: Case, model: str) -> CaseResult:
-    provider_name = suite.provider or infer_provider(model)
-    provider = get_provider(provider_name)
+    try:
+        provider_name = suite.provider or infer_provider(model)
+        provider = get_provider(provider_name, **suite.connection())
+    except Exception as e:
+        return CaseResult(
+            case.id, model, False, "", [], Usage(), 0.0,
+            error=f"{type(e).__name__}: {e}", tags=case.tags,
+        )
     try:
         prompt = render_prompt(suite, case)
     except SuiteError as e:
@@ -132,7 +168,7 @@ def _run_one(suite: Suite, case: Case, model: str) -> CaseResult:
         "max_tokens": suite.max_tokens,
         "temperature": suite.temperature,
     }
-    if provider_name == "echo":
+    if resolve_provider_name(provider_name) == "echo":
         kwargs["fixture"] = case.fixture
 
     try:
@@ -205,6 +241,7 @@ def run_suite(
         meta={
             "models": suite.models,
             "provider": suite.provider,
+            "base_url": suite.base_url,
             "suite_path": str(suite.path) if suite.path else None,
             "case_count": len(cases),
             "thresholds": suite.thresholds,

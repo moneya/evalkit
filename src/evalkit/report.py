@@ -60,6 +60,17 @@ def summary(run: RunResult, violations: list[str] | None = None) -> str:
         f"  wall time  {run.finished_at - run.started_at:.1f}s",
     ]
 
+    errored = [r for r in run.results if r.error]
+    if errored:
+        from collections import Counter
+
+        counts = Counter(r.error.split("\n")[0] for r in errored)
+        lines.append("")
+        lines.append(red(f"  errors ({len(errored)} case(s) could not run)"))
+        for msg, n in counts.most_common(4):
+            suffix = f"  x{n}" if n > 1 else ""
+            lines.append(red(f"    {msg[:150]}{suffix}"))
+
     if not run.fully_priced:
         lines.append("")
         lines.append(yellow(f"  unpriced models (cost excluded): {', '.join(run.unpriced)}"))

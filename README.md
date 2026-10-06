@@ -90,6 +90,78 @@ Then gate future changes against that baseline:
 evalkit run examples/support_triage.yaml --baseline runs/main.json
 ```
 
+## Custom endpoints — self-hosted, local, gateways
+
+Any OpenAI-shaped `/chat/completions` server works. Aliases carry a sensible
+default base URL, so the common cases are one word:
+
+```yaml
+provider: vllm          # http://localhost:8000/v1
+provider: ollama        # http://localhost:11434/v1
+provider: lmstudio      # http://localhost:1234/v1
+provider: llamacpp      # http://localhost:8080/v1
+provider: openrouter    # https://openrouter.ai/api/v1   (OPENROUTER_API_KEY)
+provider: together      # https://api.together.xyz/v1    (TOGETHER_API_KEY)
+provider: groq          # https://api.groq.com/openai/v1 (GROQ_API_KEY)
+```
+
+Or spell it out, in the suite:
+
+```yaml
+provider: openai_compatible
+base_url: http://gpu-box.internal:8000/v1
+api_key_env: MY_GATEWAY_KEY      # omit entirely for keyless vLLM/Ollama
+extra_headers:
+  X-Title: evalkit
+timeout: 120
+max_retries: 3
+models: [mistralai/Mistral-7B-Instruct-v0.3]
+```
+
+…or from the CLI, overriding any suite:
+
+```bash
+evalkit run suite.yaml \
+  --base-url http://localhost:8000/v1 \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --header 'X-Title: evalkit'
+
+export EVALKIT_BASE_URL=http://localhost:8000/v1   # or ANTHROPIC_BASE_URL / OPENAI_BASE_URL
+```
+
+Precedence: CLI flag → suite field → `PROVIDER_BASE_URL` → `EVALKIT_BASE_URL` →
+built-in default.
+
+`evalkit providers` lists every provider, alias and default endpoint.
+
+**Details that matter:**
+
+- **No API key required.** vLLM, Ollama and LM Studio serve keyless, so demanding
+  a key would lock them out. Set `api_key_env` only when your host needs one.
+- **Sends `max_tokens`, not `max_completion_tokens`.** The latter is an
+  OpenAI-specific rename that self-hosted servers reject.
+- **`anthropic` and `openai` base URLs are overridable too**, for corporate
+  proxies and recording gateways.
+- **Self-hosted models are unpriced by default** — reported `n/a`, never guessed.
+  To gate cost on a local model, supply your own figures:
+
+```bash
+cat > evalkit-pricing.json <<'JSON'
+{"openai_compatible": {"mistralai/Mistral-7B-Instruct-v0.3": {"input": 0.07, "output": 0.07}}}
+JSON
+```
+
+- **A wrong base_url is the most common mistake**, and it returns an HTML page.
+  evalkit summarises it instead of dumping 4KB of CSS into your terminal:
+
+```
+ProviderError: openai_compatible at http://localhost:8000/v1/chat/completions
+404: Not Found (HTML response — check base_url; it should point at the API
+root, e.g. http://host:8000/v1)
+```
+
+See `examples/local_model.yaml`.
+
 ## Assertions
 
 | Text | Structured | Budget |
@@ -107,6 +179,8 @@ prose, because models add them. `json_path` supports `meds[0].name` indexing.
 
 ```bash
 evalkit run SUITE [--model M ...] [--provider P] [--dry-run]
+                  [--base-url URL] [--api-key-env VAR] [--header 'K: V']
+                  [--timeout S] [--max-retries N]
                   [--tag T] [--filter SUBSTR] [-c N]
                   [--save PATH] [--baseline PATH]
                   [--min-pass-rate 0.9] [--max-cost 0.05]
@@ -179,6 +253,9 @@ worse than a date check that tells a human to look.
   independently gated data points.
 - **No LLM-as-judge in v1.** Deterministic assertions only. A grader you can't
   trust can't gate a build.
+- **`infer_provider` never guesses a custom endpoint.** Guessing
+  `openai_compatible` for an unknown model id would surface a confusing
+  connection error instead of "set `provider:` and `base_url:`".
 
 ## Tests
 

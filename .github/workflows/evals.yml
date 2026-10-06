@@ -14,6 +14,18 @@ jobs:
       - name: offline eval smoke test
         run: .venv/bin/evalkit run examples/offline_demo.yaml
 
+      - name: custom endpoint against a live local server
+        run: |
+          python3 tests/fake_openai_server.py 8731 &
+          for i in $(seq 1 20); do
+            curl -sf -o /dev/null -X POST http://127.0.0.1:8731/v1/chat/completions \
+              -H 'content-type: application/json' \
+              -d '{"model":"m","messages":[{"role":"user","content":"ping"}]}' && break
+            sleep 0.25
+          done
+          .venv/bin/evalkit run examples/local_model.yaml \
+            --base-url http://127.0.0.1:8731/v1
+
       - name: pricing table freshness
         run: .venv/bin/python scripts/check_pricing_freshness.py --max-age-days 60
 
