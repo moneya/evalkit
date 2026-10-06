@@ -11,7 +11,7 @@
 # far more output tokens. A quality-only harness merges v2. evalkit blocks it.
 name: triage-prompt-v1
 provider: echo
-models: [gpt-4o-mini]
+models: [gpt-5-mini]
 
 cases:
   - id: auth-401

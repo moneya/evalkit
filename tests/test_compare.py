@@ -6,7 +6,8 @@ from evalkit.compare import compare
 
 
 def artifact(*, pass_rate=1.0, mean_score=1.0, cost=0.01, tokens=1000,
-             p50=500.0, p95=900.0, results=None, suite="s"):
+             p50=500.0, p95=900.0, results=None, suite="s",
+             fully_priced=True, unpriced_models=None):
     return {
         "suite": suite,
         "summary": {
@@ -16,6 +17,8 @@ def artifact(*, pass_rate=1.0, mean_score=1.0, cost=0.01, tokens=1000,
             "pass_rate": pass_rate,
             "mean_score": mean_score,
             "total_cost_usd": cost,
+            "fully_priced": fully_priced,
+            "unpriced_models": unpriced_models or [],
             "total_tokens": tokens,
             "latency_p50_ms": p50,
             "latency_p95_ms": p95,
@@ -153,3 +156,30 @@ def test_ratio_surfaces_multiplier_for_blowups():
     cost = next(d for d in c.deltas if d.label == "total cost")
     assert round(cost.ratio, 1) == 9.6
     assert not c.ok
+
+
+def test_cost_gate_refuses_to_certify_an_unpriced_run():
+    """No pricing data means the gate reports that, instead of passing blind."""
+    base = artifact(cost=0.0, fully_priced=False,
+                    unpriced_models=["mystery-1"], results=[case("x", True)])
+    new = artifact(cost=0.0, fully_priced=False,
+                   unpriced_models=["mystery-1"], results=[case("x", True)])
+    c = compare(base, new)
+    assert not c.ok
+    assert any("cannot be evaluated" in v and "mystery-1" in v for v in c.violations)
+
+
+def test_fully_priced_runs_still_gate_normally():
+    base = artifact(cost=0.010, results=[case("x", True)])
+    new = artifact(cost=0.011, results=[case("x", True)])
+    assert compare(base, new).ok
+
+
+def test_legacy_artifact_without_priced_flag_is_assumed_priced():
+    """Older run files predate the flag; don't break on them."""
+    base = artifact(cost=0.01, results=[case("x", True)])
+    new = artifact(cost=0.01, results=[case("x", True)])
+    for a in (base, new):
+        del a["summary"]["fully_priced"]
+        del a["summary"]["unpriced_models"]
+    assert compare(base, new).ok

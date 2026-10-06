@@ -11,6 +11,16 @@ jobs:
         run: .venv/bin/pytest -q
       - name: offline eval smoke test
         run: .venv/bin/evalkit run examples/offline_demo.yaml
+
+      - name: pricing table freshness
+        run: .venv/bin/python scripts/check_pricing_freshness.py --max-age-days 60
+
+      - name: unpriced models fail closed
+        run: |
+          if .venv/bin/evalkit run examples/unpriced_model.yaml; then
+            echo "::error::an unpriced model passed a cost gate"; exit 1
+          fi
+          echo "unpriced model correctly failed the cost assertion"
       - name: regression gate catches a cost blowup
         run: |
           .venv/bin/evalkit run examples/regression_v1.yaml --save /tmp/v1.json --no-fail-on-case -q

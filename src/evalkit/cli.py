@@ -124,12 +124,33 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 def _cmd_providers(args: argparse.Namespace) -> int:
     from .assertions import available
-    print("providers: anthropic, openai, echo")
-    print("\nassertions:")
+    from .providers import default_model_for
+
+    print("providers")
+    for name in ("anthropic", "openai", "echo"):
+        print(f"  {name:<12} default model: {default_model_for(name)}")
+    print("\nassertions")
     for a in available():
         print(f"  - {a}")
-    print("\npricing (USD per 1M tokens, [input, output]):")
+    return 0
+
+
+def _cmd_pricing(args: argparse.Namespace) -> int:
+    from .pricing import known_models, lookup, verified_on
+
+    if args.model:
+        price = lookup(args.model)
+        if price is None:
+            print(f"{args.model}: NOT PRICED — cost gates will fail for this model.")
+            print("Add it to data/pricing.json or ./evalkit-pricing.json")
+            return 1
+        pin, pout = price
+        print(f"{args.model}: ${pin}/1M input, ${pout}/1M output "
+              f"(table verified {verified_on()})")
+        return 0
+
     print(dump_pricing())
+    print(f"\n{len(known_models())} models priced.")
     return 0
 
 
@@ -178,8 +199,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_cmp_flags(c)
     c.set_defaults(fn=_cmd_compare)
 
-    pr = sub.add_parser("providers", help="list providers, assertions and pricing")
+    pr = sub.add_parser("providers", help="list providers and assertions")
     pr.set_defaults(fn=_cmd_providers)
+
+    pc = sub.add_parser("pricing", help="show the pricing table, or one model's price")
+    pc.add_argument("model", nargs="?", help="check a single model id")
+    pc.set_defaults(fn=_cmd_pricing)
 
     return p
 

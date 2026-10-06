@@ -2,53 +2,31 @@
 
 Built in: anthropic, openai, echo (offline, deterministic — used by tests and
 by `evalkit run --dry-run` so the harness is usable with no API key).
+
+Pricing is NOT hardcoded here; see pricing.py and data/pricing.json.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from typing import Any, Protocol
 
 import httpx
 
+from .pricing import cost_of, known_models, lookup, render
 from .types import Completion, Usage
 
-# USD per 1M tokens (input, output). Update as pricing changes.
-PRICING: dict[str, tuple[float, float]] = {
-    # Anthropic
-    "claude-opus-4-20250514": (15.00, 75.00),
-    "claude-sonnet-4-20250514": (3.00, 15.00),
-    "claude-3-5-sonnet-20241022": (3.00, 15.00),
-    "claude-3-5-haiku-20241022": (0.80, 4.00),
-    "claude-3-haiku-20240307": (0.25, 1.25),
-    # OpenAI
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4.1": (2.00, 8.00),
-    "gpt-4.1-mini": (0.40, 1.60),
-    "o4-mini": (1.10, 4.40),
-}
-
-DEFAULT_PRICE = (1.00, 3.00)
-
-
-def price_for(model: str) -> tuple[float, float]:
-    """Exact match, else longest known prefix, else a flat default."""
-    if model in PRICING:
-        return PRICING[model]
-    best, best_len = DEFAULT_PRICE, 0
-    for known, p in PRICING.items():
-        stem = known.rsplit("-", 1)[0]
-        if model.startswith(stem) and len(stem) > best_len:
-            best, best_len = p, len(stem)
-    return best
-
-
-def cost_of(model: str, input_tokens: int, output_tokens: int) -> float:
-    pin, pout = price_for(model)
-    return round((input_tokens * pin + output_tokens * pout) / 1_000_000, 8)
+__all__ = [
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "EchoProvider",
+    "ProviderError",
+    "get_provider",
+    "infer_provider",
+    "default_model_for",
+    "dump_pricing",
+]
 
 
 class ProviderError(RuntimeError):
@@ -98,12 +76,20 @@ class _HTTPProvider:
                     time.sleep(1.5 * (2**attempt))
         raise ProviderError(f"{self.name} failed after {self.max_retries} attempts: {last}")
 
+    def _usage(self, model: str, itok: int, otok: int) -> Usage:
+        return Usage(
+            input_tokens=itok,
+            output_tokens=otok,
+            cost_usd=cost_of(model, itok, otok, provider=self.name),
+        )
+
 
 class AnthropicProvider(_HTTPProvider):
     name = "anthropic"
     env_key = "ANTHROPIC_API_KEY"
-    default_model = "claude-3-5-haiku-20241022"
+    default_model = "claude-haiku-4-5"
     url = "https://api.anthropic.com/v1/messages"
+    api_version = "2023-06-01"
 
     def complete(
         self,
@@ -125,29 +111,36 @@ class AnthropicProvider(_HTTPProvider):
             payload["system"] = system
         headers = {
             "x-api-key": self._api_key(),
-            "anthropic-version": "2023-06-01",
+            "anthropic-version": self.api_version,
             "content-type": "application/json",
         }
         t0 = time.perf_counter()
         data = self._post(self.url, headers, payload)
         latency = (time.perf_counter() - t0) * 1000
 
-        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+        text = "".join(
+            b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
+        )
         u = data.get("usage", {})
         itok, otok = int(u.get("input_tokens", 0)), int(u.get("output_tokens", 0))
         return Completion(
             text=text,
-            usage=Usage(itok, otok, cost_of(model, itok, otok)),
+            usage=self._usage(model, itok, otok),
             latency_ms=latency,
             model=model,
             raw=data,
         )
 
 
+def _is_reasoning_model(model: str) -> bool:
+    m = model.lower()
+    return m.startswith(("o1", "o3", "o4")) or m.endswith("-pro")
+
+
 class OpenAIProvider(_HTTPProvider):
     name = "openai"
     env_key = "OPENAI_API_KEY"
-    default_model = "gpt-4o-mini"
+    default_model = "gpt-5-mini"
     url = "https://api.openai.com/v1/chat/completions"
 
     def complete(
@@ -164,12 +157,16 @@ class OpenAIProvider(_HTTPProvider):
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_completion_tokens": max_tokens,
-            "temperature": temperature,
         }
+        # Reasoning models reject an explicit temperature, so only send one when
+        # the suite asked for something other than the provider default.
+        if not _is_reasoning_model(model):
+            payload["temperature"] = temperature
+
         headers = {
             "authorization": f"Bearer {self._api_key()}",
             "content-type": "application/json",
@@ -184,7 +181,7 @@ class OpenAIProvider(_HTTPProvider):
         itok, otok = int(u.get("prompt_tokens", 0)), int(u.get("completion_tokens", 0))
         return Completion(
             text=text,
-            usage=Usage(itok, otok, cost_of(model, itok, otok)),
+            usage=self._usage(model, itok, otok),
             latency_ms=latency,
             model=model,
             raw=data,
@@ -194,12 +191,14 @@ class OpenAIProvider(_HTTPProvider):
 class EchoProvider:
     """Offline provider. Deterministic, free, no network.
 
-    Resolution order for the reply:
+    Reply resolution:
       1. `fixture` on the case (exact canned output)
-      2. the case's `expect` field, if present
-      3. the prompt echoed back
+      2. the prompt echoed back
 
-    This makes the harness and its own test suite runnable with zero API keys.
+    Token counts are a ~4-chars-per-token approximation, not a real tokenizer.
+    Cost follows the pricing table for the given model id, so naming a priced
+    model (e.g. gpt-4o-mini) gives realistic cost arithmetic with no network
+    call — that is how the regression-gate demo stays free and deterministic.
     """
 
     name = "echo"
@@ -221,7 +220,7 @@ class EchoProvider:
         otok = max(1, len(text) // 4)
         return Completion(
             text=text,
-            usage=Usage(itok, otok, cost_of(model, itok, otok) if model in PRICING else 0.0),
+            usage=Usage(itok, otok, cost_of(model, itok, otok)),
             latency_ms=0.5,
             model=model,
             raw={"provider": "echo"},
@@ -242,17 +241,32 @@ def get_provider(name: str):
     return cls()
 
 
+def default_model_for(provider: str) -> str:
+    return get_provider(provider).default_model
+
+
 def infer_provider(model: str) -> str:
-    """Guess the provider from a model id."""
+    """Resolve a model id to a provider.
+
+    Prefers the pricing table (data, updatable without touching code) and falls
+    back to name prefixes for models not yet listed there.
+    """
+    for provider in _REGISTRY:
+        if lookup(model, provider) is not None:
+            return provider
+
     m = model.lower()
     if m.startswith("claude"):
         return "anthropic"
-    if m.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):
+    if m.startswith(("gpt", "o1", "o3", "o4", "chatgpt", "davinci", "babbage")):
         return "openai"
     if m.startswith("echo"):
         return "echo"
-    raise ProviderError(f"cannot infer provider for model {model!r}; set `provider:` explicitly")
+    raise ProviderError(
+        f"cannot infer provider for model {model!r}. Set `provider:` in the suite, "
+        f"or add the model to the pricing table. Known models include: {known_models()[:6]}"
+    )
 
 
 def dump_pricing() -> str:
-    return json.dumps(PRICING, indent=2, sort_keys=True)
+    return render()

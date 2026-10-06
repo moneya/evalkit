@@ -28,7 +28,12 @@ FAIL = "FAIL"
 
 def line_for(result) -> str:
     mark = green(PASS) if result.passed else red(FAIL)
-    cost = f"${result.usage.cost_usd:.6f}" if result.usage.cost_usd else "$0"
+    if result.usage.cost_usd is None:
+        cost = "n/a"
+    elif result.usage.cost_usd:
+        cost = f"${result.usage.cost_usd:.6f}"
+    else:
+        cost = "$0"
     head = f"  {mark}  {result.case_id} {dim('[' + result.model + ']')}"
     stats = dim(f"{result.latency_ms:>6.0f}ms  {cost:>10}  {result.usage.output_tokens:>4}tok")
     out = f"{head:<62} {stats}"
@@ -49,10 +54,16 @@ def summary(run: RunResult, violations: list[str] | None = None) -> str:
         bold(f"  {run.suite}"),
         f"  cases      {run.passed}/{run.total} passed  " + color(f"({rate:.1%})"),
         f"  mean score {run.mean_score:.3f}",
-        f"  cost       ${run.total_cost:.6f}   ({run.total_tokens:,} tokens)",
+        f"  cost       ${run.total_cost:.6f}   ({run.total_tokens:,} tokens)"
+        + ("" if run.fully_priced else yellow("   [partial: unpriced models present]")),
         f"  latency    p50 {run.latency_p(50):.0f}ms   p95 {run.latency_p(95):.0f}ms",
         f"  wall time  {run.finished_at - run.started_at:.1f}s",
     ]
+
+    if not run.fully_priced:
+        lines.append("")
+        lines.append(yellow(f"  unpriced models (cost excluded): {', '.join(run.unpriced)}"))
+        lines.append(dim("  add them to data/pricing.json or ./evalkit-pricing.json"))
 
     models = run.by_model()
     if len(models) > 1:
@@ -60,7 +71,7 @@ def summary(run: RunResult, violations: list[str] | None = None) -> str:
         lines.append(dim("  per model"))
         for m, rs in models.items():
             p = sum(1 for r in rs if r.passed)
-            c = sum(r.usage.cost_usd for r in rs)
+            c = sum(r.usage.cost_usd or 0.0 for r in rs)
             lat = sorted(r.latency_ms for r in rs)[len(rs) // 2]
             lines.append(f"    {m:<34} {p}/{len(rs)}  ${c:.6f}  p50 {lat:.0f}ms")
 

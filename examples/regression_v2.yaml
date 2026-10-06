@@ -4,7 +4,7 @@
 # This is the exact tradeoff teams make by accident. See README.
 name: triage-prompt-v1          # same suite name: this is v2 OF THE SAME SUITE
 provider: echo
-models: [gpt-4o-mini]
+models: [gpt-5-mini]
 
 cases:
   - id: auth-401

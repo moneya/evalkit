@@ -1,0 +1,23 @@
+# Demonstrates fail-closed behaviour on an unknown model.
+#
+#   evalkit run examples/unpriced_model.yaml
+#
+# evalkit reports the model as unpriced instead of inventing a cost. The
+# max_cost assertion fails rather than passing on a number nobody verified.
+name: unpriced-demo
+provider: echo
+models: [some-model-released-next-tuesday]
+
+cases:
+  - id: output-is-fine
+    prompt: "anything"
+    fixture: "ok"
+    assert:
+      - contains: "ok"
+
+  - id: cost-cannot-be-verified
+    prompt: "anything"
+    fixture: "ok"
+    assert:
+      - contains: "ok"
+      - max_cost: 0.01

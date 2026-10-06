@@ -114,13 +114,21 @@ def compare(
         )
 
     cost = deltas[2]
-    if cost.pct_change is not None and cost.pct_change > max_cost_increase_pct:
+    b_priced = bs.get("fully_priced", True)
+    c_priced = cs.get("fully_priced", True)
+    if not (b_priced and c_priced):
+        missing = sorted(set(bs.get("unpriced_models", [])) | set(cs.get("unpriced_models", [])))
+        violations.append(
+            "cost gate cannot be evaluated: unpriced model(s) "
+            f"{missing} — add them to the pricing table"
+        )
+    elif cost.pct_change is not None and cost.pct_change > max_cost_increase_pct:
         ratio = f" ({cost.ratio:.2f}x)" if cost.ratio else ""
         violations.append(
             f"cost rose {cost.pct_change:.1f}%{ratio} "
             f"(${cost.before:.6f} -> ${cost.after:.6f}), tolerance {max_cost_increase_pct:.0f}%"
         )
-    elif cost.before == 0 and cost.after > 0:
+    elif b_priced and c_priced and cost.before == 0 and cost.after > 0:
         violations.append(f"cost rose from $0 to ${cost.after:.6f}")
 
     p95 = deltas[5]

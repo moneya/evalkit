@@ -7,7 +7,8 @@ import json
 import pytest
 
 from evalkit.compare import compare
-from evalkit.providers import cost_of, infer_provider, price_for
+from evalkit.pricing import cost_of, lookup
+from evalkit.providers import infer_provider
 from evalkit.runner import (
     SuiteError,
     check_thresholds,
@@ -159,9 +160,9 @@ cases:
 # -- cost math ------------------------------------------------------------
 
 def test_cost_exact_model():
-    # haiku: $0.80 in / $4.00 out per 1M
-    assert cost_of("claude-3-5-haiku-20241022", 1_000_000, 0) == pytest.approx(0.80)
-    assert cost_of("claude-3-5-haiku-20241022", 0, 1_000_000) == pytest.approx(4.00)
+    # claude-haiku-4-5: $1.00 in / $5.00 out per 1M
+    assert cost_of("claude-haiku-4-5", 1_000_000, 0) == pytest.approx(1.00)
+    assert cost_of("claude-haiku-4-5", 0, 1_000_000) == pytest.approx(5.00)
 
 
 def test_cost_scales_linearly():
@@ -170,13 +171,21 @@ def test_cost_scales_linearly():
     assert b == pytest.approx(a * 2)
 
 
-def test_unknown_model_falls_back_to_default_price():
-    assert price_for("some-unreleased-model-9") == (1.00, 3.00)
+def test_unknown_model_is_unpriced_not_guessed():
+    """The old behaviour invented $1/$3 for anything unknown. Never again."""
+    assert lookup("some-unreleased-model-9") is None
+    assert cost_of("some-unreleased-model-9", 1_000_000, 1_000_000) is None
+
+
+def test_similar_model_ids_are_not_conflated():
+    """gpt-5.5-pro is 6x gpt-5.5; prefix matching would under-report it."""
+    assert lookup("gpt-5.5") == (5.00, 30.00)
+    assert lookup("gpt-5.5-pro") == (30.00, 180.00)
 
 
 def test_provider_inference():
-    assert infer_provider("claude-3-5-haiku-20241022") == "anthropic"
-    assert infer_provider("gpt-4o") == "openai"
+    assert infer_provider("claude-haiku-4-5") == "anthropic"
+    assert infer_provider("gpt-5-mini") == "openai"
     assert infer_provider("echo-1") == "echo"
     with pytest.raises(Exception):
         infer_provider("llama-3")
@@ -186,7 +195,7 @@ def test_missing_api_key_is_a_case_error_not_a_crash(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     s = """
 name: t
-models: [claude-3-5-haiku-20241022]
+models: [claude-haiku-4-5]
 cases:
   - {id: a, prompt: x}
 """

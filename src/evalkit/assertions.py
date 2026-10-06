@@ -228,6 +228,12 @@ def _max_tokens(spec: Any, c: Completion) -> AssertionResult:
 
 @check("max_cost")
 def _max_cost(spec: Any, c: Completion) -> AssertionResult:
+    if c.usage.cost_usd is None:
+        return _ok(
+            "max_cost", False,
+            f"model {c.model!r} is not in the pricing table, so cost cannot be "
+            f"verified — add it or drop this assertion",
+        )
     hit = c.usage.cost_usd <= float(spec)
     return _ok("max_cost", hit, "" if hit else f"${c.usage.cost_usd:.6f} > ${float(spec):.6f}")
 

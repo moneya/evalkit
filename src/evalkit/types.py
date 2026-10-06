@@ -9,17 +9,34 @@ from typing import Any
 
 @dataclass
 class Usage:
-    """Token counts and derived dollar cost for one model call."""
+    """Token counts and derived dollar cost for one model call.
+
+    cost_usd is None when the model is absent from the pricing table. None means
+    "unknown", which is deliberately NOT the same as 0.0 ("free"). A cost gate
+    must not be satisfied by a number nobody verified.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
-    cost_usd: float = 0.0
+    cost_usd: float | None = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def priced(self) -> bool:
+        return self.cost_usd is not None
 
     def __add__(self, other: "Usage") -> "Usage":
+        if self.cost_usd is None or other.cost_usd is None:
+            cost = None
+        else:
+            cost = round(self.cost_usd + other.cost_usd, 8)
         return Usage(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
-            cost_usd=round(self.cost_usd + other.cost_usd, 8),
+            cost_usd=cost,
         )
 
 
@@ -114,7 +131,17 @@ class RunResult:
 
     @property
     def total_cost(self) -> float:
-        return round(sum(r.usage.cost_usd for r in self.results), 6)
+        """Sum of known costs. Unpriced results contribute 0; see `unpriced`."""
+        return round(sum(r.usage.cost_usd or 0.0 for r in self.results), 6)
+
+    @property
+    def unpriced(self) -> list[str]:
+        """Models whose cost could not be computed — reported, never guessed."""
+        return sorted({r.model for r in self.results if not r.usage.priced})
+
+    @property
+    def fully_priced(self) -> bool:
+        return not self.unpriced
 
     @property
     def total_tokens(self) -> int:
@@ -151,6 +178,8 @@ class RunResult:
                 "pass_rate": round(self.pass_rate, 4),
                 "mean_score": round(self.mean_score, 4),
                 "total_cost_usd": self.total_cost,
+                "fully_priced": self.fully_priced,
+                "unpriced_models": self.unpriced,
                 "total_tokens": self.total_tokens,
                 "latency_p50_ms": self.latency_p(50),
                 "latency_p95_ms": self.latency_p(95),

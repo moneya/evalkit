@@ -5,7 +5,7 @@ system: |
   {"category": "...", "severity": "low|medium|high", "escalate": true|false}
   Valid categories: auth, payload, webhook, rate_limit, payment_declined, unknown.
 
-models: [claude-3-5-haiku-20241022]
+models: [claude-haiku-4-5]
 max_tokens: 300
 temperature: 0
 
