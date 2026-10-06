@@ -11,6 +11,26 @@ jobs:
       - run: uv venv && uv pip install -e ".[dev]"
       - name: unit tests
         run: .venv/bin/pytest -q
+      - name: shipped example suites validate clean
+        run: |
+          .venv/bin/evalkit validate \
+            examples/offline_demo.yaml \
+            examples/support_triage.yaml \
+            examples/regression_v1.yaml \
+            examples/regression_v2.yaml \
+            examples/local_model.yaml \
+            examples/unpriced_model.yaml
+
+      - name: validator catches a broken suite
+        run: |
+          if .venv/bin/evalkit validate examples/broken_suite.yaml; then
+            echo "::error::validator passed a suite with 9 known errors"; exit 1
+          fi
+          if .venv/bin/evalkit run examples/broken_suite.yaml; then
+            echo "::error::run started despite suite errors"; exit 1
+          fi
+          echo "validator correctly blocked the broken suite"
+
       - name: offline eval smoke test
         run: .venv/bin/evalkit run examples/offline_demo.yaml
 

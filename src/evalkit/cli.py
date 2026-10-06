@@ -50,6 +50,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
         suite.models = ["echo-1"]
         suite.base_url = None
 
+    if not args.no_validate:
+        from .validate import ERROR, validate
+
+        problems = [f for f in validate(suite) if f.severity == ERROR]
+        if problems:
+            print("\n  suite has errors — nothing was sent to a model:\n", file=sys.stderr)
+            for f in problems:
+                print(f"  {f}", file=sys.stderr)
+            print(
+                f"\n  fix these, or run `evalkit validate {args.suite}` for the full report.",
+                file=sys.stderr,
+            )
+            return 2
+
     where = f" via {suite.base_url}" if suite.base_url else ""
     print(
         f"\n  running {suite.name}  "
@@ -175,6 +189,42 @@ def _cmd_providers(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_validate(args: argparse.Namespace) -> int:
+    from .report import bold, dim, green, red, yellow
+    from .validate import ERROR, INFO, WARNING, validate, worst_severity
+
+    exit_code = 0
+    for path in args.suites:
+        try:
+            suite = load_suite(path)
+        except SuiteError as e:
+            print(red(f"ERROR   {path}: {e}"))
+            exit_code = 2
+            continue
+
+        findings = validate(suite)
+        if args.strict:
+            findings = [f for f in findings if f.severity != INFO]
+
+        paint = {ERROR: red, WARNING: yellow, INFO: dim}
+        print(bold(f"\n  {path}  ({suite.name})"))
+        if not findings:
+            print(green("  OK — no issues found"))
+        for f in findings:
+            for i, line in enumerate(str(f).split("\n")):
+                print(f"  {paint[f.severity](line)}")
+
+        worst = worst_severity(findings)
+        if worst == ERROR:
+            exit_code = max(exit_code, 1)
+        elif worst == WARNING and args.strict:
+            exit_code = max(exit_code, 1)
+
+    if exit_code == 0:
+        print(green("\n  all suites valid"))
+    return exit_code
+
+
 def _cmd_pricing(args: argparse.Namespace) -> int:
     from .pricing import known_models, lookup, verified_on
 
@@ -240,6 +290,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("-q", "--quiet", action="store_true", help="summary only")
     r.add_argument("--min-pass-rate", type=float, help="absolute gate, e.g. 0.9")
     r.add_argument("--max-cost", type=float, help="absolute total-cost budget in USD")
+    r.add_argument("--no-validate", action="store_true",
+                   help="skip the preflight suite check")
     r.add_argument("--no-fail-on-case", action="store_true",
                    help="exit 0 even when individual cases fail (gates still apply)")
     _add_cmp_flags(r)
@@ -254,6 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = sub.add_parser("providers", help="list providers and assertions")
     pr.set_defaults(fn=_cmd_providers)
+
+    v = sub.add_parser(
+        "validate",
+        help="check suites for errors without running them (no API calls, no cost)",
+    )
+    v.add_argument("suites", nargs="+", help="suite YAML file(s)")
+    v.add_argument("--strict", action="store_true",
+                   help="treat warnings as failures and hide info notes")
+    v.set_defaults(fn=_cmd_validate)
 
     pc = sub.add_parser("pricing", help="show the pricing table, or one model's price")
     pc.add_argument("model", nargs="?", help="check a single model id")

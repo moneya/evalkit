@@ -32,6 +32,8 @@ __all__ = [
     "infer_provider",
     "default_model_for",
     "resolve_provider_name",
+    "alias_defaults",
+    "effective_base_url",
     "dump_pricing",
 ]
 
@@ -448,6 +450,34 @@ _ALIAS_DEFAULTS: dict[str, dict[str, str]] = {
         "api_key_env": "DEEPINFRA_API_KEY",
     },
 }
+
+
+def alias_defaults(name: str) -> dict[str, str]:
+    """Connection defaults a provider alias supplies (may be empty)."""
+    return dict(_ALIAS_DEFAULTS.get((name or "").strip().lower(), {}))
+
+
+def effective_base_url(provider: str | None, base_url: str | None) -> str | None:
+    """Base URL that would actually be used, accounting for aliases and env.
+
+    Lets callers (e.g. preflight validation) tell a genuinely missing base_url
+    apart from one supplied by an alias such as `ollama`.
+    """
+    if base_url:
+        return base_url
+    raw = (provider or "").strip().lower()
+    if not raw:
+        return None
+    cls = _REGISTRY.get(resolve_provider_name(raw))
+    if cls is None:
+        return None
+    return (
+        alias_defaults(raw).get("base_url")
+        or os.environ.get(f"{resolve_provider_name(raw).upper()}_BASE_URL", "").strip()
+        or os.environ.get("EVALKIT_BASE_URL", "").strip()
+        or getattr(cls, "default_base_url", "")
+        or None
+    )
 
 
 def resolve_provider_name(name: str) -> str:

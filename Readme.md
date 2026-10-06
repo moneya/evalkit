@@ -306,6 +306,61 @@ root, e.g. http://host:8000/v1)
 
 See `examples/local_model.yaml`.
 
+## Validate before you spend
+
+A run against a hosted model costs money and minutes. Most suite mistakes are
+boring and detectable statically, so `evalkit validate` finds them for free:
+
+```bash
+evalkit validate evals/*.yaml
+```
+
+```
+  examples/broken_suite.yaml  (deliberately-broken)
+  ERROR   case 'typo-in-assertion' assertion #1: unknown assertion 'contain'
+          hint: did you mean 'contains'?
+  ERROR   case 'missing-template-var': template variable(s) ['patient'] have no value
+          hint: add them under `vars:` (provided: ['metric'])
+  ERROR   case 'bad-regex' assertion #1: invalid regex: unterminated character set
+  ERROR   thresholds.min_pass_rate: must be a fraction between 0 and 1, got 90
+          hint: 90% is 0.9, not 90
+  ERROR   thresholds.max_cost: unknown threshold — it will be silently ignored
+          hint: did you mean 'max_total_cost'?
+  WARNING case 'no-assertions': no assertions — this case can never fail
+  WARNING case 'json-path-no-comparison' assertion #1: json_path has no
+          equals/contains/exists, so it only checks presence
+  INFO    suite: 9 case(s) x 1 model(s) = 9 API call(s)
+```
+
+What it catches:
+
+| Class | Examples |
+|---|---|
+| Typos | unknown assertion or threshold name, with a "did you mean" suggestion |
+| Wrong shapes | `json_path` given a string, `one_of` given a scalar, `max_tokens` given text |
+| Broken regex | compiled at validation time, not on the first API response |
+| Template holes | `${patient}` with no matching `vars` entry; unused vars |
+| Silent no-ops | a case with no assertions, `json_path` with nothing to compare, `max_tokens: 0` |
+| Config mistakes | `min_pass_rate: 90` instead of `0.9`, a cost budget on an unpriced model |
+| Dead config | `fixture` set while the provider isn't `echo`, so it will be ignored |
+| Scale | total API calls the run will make, warning above 200 |
+
+**`run` validates first by default.** A suite with errors exits `2` and sends
+nothing to any model:
+
+```
+$ evalkit run examples/broken_suite.yaml
+  suite has errors — nothing was sent to a model:
+
+  ERROR   case 'bad-regex' assertion #1: invalid regex: unterminated character set
+  ...
+  fix these, or run `evalkit validate examples/broken_suite.yaml` for the full report.
+```
+
+Use `--no-validate` to skip the check, and `validate --strict` in CI to fail on
+warnings too. `examples/broken_suite.yaml` collects one of nearly every mistake
+if you want to see the output.
+
 ## Assertions
 
 | Text | Structured | Budget |
@@ -325,7 +380,7 @@ prose, because models add them. `json_path` supports `meds[0].name` indexing.
 evalkit run SUITE [--model M ...] [--provider P] [--dry-run]
                   [--base-url URL] [--api-key-env VAR] [--header 'K: V']
                   [--timeout S] [--max-retries N]
-                  [--tag T] [--filter SUBSTR] [-c N]
+                  [--tag T] [--filter SUBSTR] [-c N] [--no-validate]
                   [--save PATH] [--baseline PATH]
                   [--min-pass-rate 0.9] [--max-cost 0.05]
 
@@ -333,7 +388,9 @@ evalkit compare BASELINE CURRENT [--json]
                 [--max-cost-increase 20] [--max-pass-drop 0]
                 [--max-latency-increase 50] [--allow-new-failures]
 
-evalkit providers      # providers, default models, assertion list
+evalkit validate SUITE... [--strict]   # static checks, no API calls
+
+evalkit providers        # providers, default models, assertion list
 evalkit pricing [MODEL]  # pricing table or one model
 ```
 
@@ -343,10 +400,17 @@ Exit codes: `0` pass, `1` regression or gate violation, `2` bad input.
 
 ```yaml
 - run: uv pip install -e .
+
+# fast, free, no credentials — catches typos before the paid step runs
+- run: evalkit validate evals/*.yaml --strict
+
 - run: evalkit run evals/triage.yaml --baseline evals/baselines/main.json
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
+
+Putting `validate --strict` before the paid step means a pull request with a
+typo'd assertion fails in seconds instead of after spending the eval budget.
 
 ## Pricing
 
@@ -395,6 +459,8 @@ worse than a date check that tells a human to look.
   readable.
 - **Cases are keyed `case_id@model`**, so running two models produces two
   independently gated data points.
+- **Validation runs before any request.** A typo should cost zero dollars to
+  find, so `run` preflights the suite and refuses to start if it has errors.
 - **No LLM-as-judge in v1.** Deterministic assertions only. A grader you can't
   trust can't gate a build.
 - **`infer_provider` never guesses a custom endpoint.** Guessing
