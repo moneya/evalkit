@@ -6,6 +6,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+        with:
+          cache-dependency-glob: pyproject.toml
       - run: uv venv && uv pip install -e ".[dev]"
       - name: unit tests
         run: .venv/bin/pytest -q
@@ -26,6 +28,6 @@ jobs:
           .venv/bin/evalkit run examples/regression_v1.yaml --save /tmp/v1.json --no-fail-on-case -q
           .venv/bin/evalkit run examples/regression_v2.yaml --save /tmp/v2.json -q
           if .venv/bin/evalkit compare /tmp/v1.json /tmp/v2.json; then
-            echo "::error::gate failed to catch a 9.6x cost increase"; exit 1
+            echo "::error::gate failed to catch a 10x cost increase"; exit 1
           fi
           echo "gate correctly blocked the cost regression"
