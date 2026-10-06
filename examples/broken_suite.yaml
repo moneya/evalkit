@@ -1,0 +1,63 @@
+# A suite with one of nearly every mistake, for demonstrating `evalkit validate`.
+#
+#   evalkit validate examples/broken_suite.yaml
+#
+# Every finding below is caught statically — no API call, no spend. Running this
+# suite against a hosted model would have burned money to discover the same
+# things one failure at a time.
+name: deliberately-broken
+models: [claude-haiku-4-5]
+
+thresholds:
+  min_pass_rate: 90          # ERROR: fraction expected, 90% is 0.9
+  max_cost: 0.05             # ERROR: unknown key (it's max_total_cost)
+
+cases:
+  - id: typo-in-assertion
+    prompt: "classify this"
+    assert:
+      - contain: "auth"       # ERROR: unknown assertion, meant `contains`
+
+  - id: two-checks-in-one-item
+    prompt: "classify this"
+    assert:
+      - contains: "a"         # ERROR: one mapping must hold exactly one check
+        regex: "b"
+
+  - id: missing-template-var
+    prompt: "Report ${metric} for ${patient}."
+    vars: {metric: "HbA1c"}   # ERROR: ${patient} has no value
+    assert:
+      - contains: "HbA1c"
+
+  - id: unused-var
+    prompt: "No placeholders here."
+    vars: {unused: 1}         # WARNING: never referenced
+    assert:
+      - contains: "here"
+
+  - id: bad-regex
+    prompt: "classify this"
+    assert:
+      - regex: "([unclosed"   # ERROR: invalid regex
+
+  - id: wrong-shape
+    prompt: "classify this"
+    assert:
+      - json_path: "category" # ERROR: expects a mapping
+      - one_of: "yes"         # ERROR: expects a list
+      - max_tokens: "lots"    # ERROR: expects a number
+
+  - id: json-path-no-comparison
+    prompt: "classify this"
+    assert:
+      - json_path: {path: category}   # WARNING: only checks presence
+
+  - id: no-assertions
+    prompt: "classify this"           # WARNING: can never fail
+
+  - id: ignored-fixture
+    prompt: "classify this"
+    fixture: "canned"                 # WARNING: ignored unless provider is echo
+    assert:
+      - contains: "canned"
