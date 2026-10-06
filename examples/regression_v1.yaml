@@ -1,0 +1,43 @@
+# Regression-gate demo, fully offline.
+#
+# Uses the echo provider but a *priced* model id, so cost is computed from real
+# token math while staying free and deterministic. Compare v1 vs v2:
+#
+#   evalkit run examples/regression_v1.yaml --save runs/v1.json
+#   evalkit run examples/regression_v2.yaml --save runs/v2.json
+#   evalkit compare runs/v1.json runs/v2.json
+#
+# v1 = terse prompt. v2 = chain-of-thought prompt: slightly better quality,
+# far more output tokens. A quality-only harness merges v2. evalkit blocks it.
+name: triage-prompt-v1
+provider: echo
+models: [gpt-4o-mini]
+
+cases:
+  - id: auth-401
+    prompt: "classify: 401 invalid api key"
+    fixture: '{"category":"auth","escalate":false}'
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: auth}
+
+  - id: webhook-sig
+    prompt: "classify: webhook signature mismatch"
+    fixture: '{"category":"webhook","escalate":false}'
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: webhook}
+
+  - id: rate-limit
+    prompt: "classify: bursts of 429"
+    fixture: '{"category":"rate_limit","escalate":false}'
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: rate_limit}
+
+  - id: bad-amount
+    prompt: "classify: invalid integer 12.50 on amount"
+    fixture: '{"category":"unknown","escalate":false}'
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: payload}

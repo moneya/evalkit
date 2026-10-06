@@ -1,0 +1,76 @@
+name: support-triage-v1
+system: |
+  You are a technical support triage assistant for a payments API.
+  Classify the incoming integration failure and reply with JSON only:
+  {"category": "...", "severity": "low|medium|high", "escalate": true|false}
+  Valid categories: auth, payload, webhook, rate_limit, payment_declined, unknown.
+
+models: [claude-3-5-haiku-20241022]
+max_tokens: 300
+temperature: 0
+
+thresholds:
+  min_pass_rate: 0.9
+  max_total_cost: 0.05
+  max_p95_latency_ms: 8000
+
+cases:
+  - id: auth-401
+    tags: [auth]
+    prompt: |
+      Client reports: every request returns 401 with
+      {"error":{"type":"authentication_error","message":"Invalid API Key provided: sk_test_***"}}
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: auth}
+      - json_path: {path: escalate, equals: false}
+      - max_tokens: 150
+
+  - id: webhook-signature
+    tags: [webhook]
+    prompt: |
+      Client reports: webhook endpoint returns 400, our logs show
+      "No signatures found matching the expected signature for payload".
+      They deployed a body-parser change this morning.
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: webhook}
+      - json_keys: [category, severity, escalate]
+
+  - id: malformed-payload
+    tags: [payload]
+    prompt: |
+      Client reports: 400 Bad Request on POST /v1/charges with
+      {"error":{"param":"amount","message":"Invalid integer: 12.50"}}
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: payload}
+
+  - id: rate-limited
+    tags: [rate_limit]
+    prompt: |
+      Client reports: bursts of 429 responses during their nightly batch job,
+      roughly 300 requests per second sustained.
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: rate_limit}
+
+  - id: outage-high-severity
+    tags: [escalate]
+    prompt: |
+      Client reports: all payments failing across every endpoint for 40 minutes,
+      merchant has lost roughly $80,000 in transactions. Status page shows green.
+    assert:
+      - json_valid: true
+      - json_path: {path: severity, equals: high}
+      - json_path: {path: escalate, equals: true}
+
+  - id: no-hedging
+    tags: [format]
+    prompt: |
+      Client reports: 403 Forbidden when calling /v1/refunds with a restricted key.
+    assert:
+      - json_valid: true
+      - not_contains: "I cannot"
+      - not_contains: "As an AI"
+      - not_regex: {pattern: "^(Sure|Certainly|Here)"}

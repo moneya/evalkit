@@ -1,0 +1,61 @@
+# Offline demo suite — no API key needed.
+#
+#   evalkit run examples/offline_demo.yaml
+#
+# The echo provider replies with each case's `fixture`, so assertions run
+# against known text. This is how the harness proves itself without spending
+# money, and how CI smoke-tests the tool.
+name: offline-demo
+provider: echo
+models: [echo-1]
+
+thresholds:
+  min_pass_rate: 1.0
+
+cases:
+  - id: json-shape
+    prompt: "classify this failure"
+    fixture: '{"category": "auth", "severity": "high", "escalate": true}'
+    assert:
+      - json_valid: true
+      - json_keys: [category, severity, escalate]
+      - json_path: {path: category, equals: auth}
+      - json_path: {path: escalate, equals: true}
+
+  - id: fenced-json
+    prompt: "classify with markdown fence"
+    fixture: |
+      Here is the result:
+      ```json
+      {"category": "webhook", "items": [{"name": "signature"}]}
+      ```
+    assert:
+      - json_valid: true
+      - json_path: {path: "items[0].name", equals: signature}
+
+  - id: text-checks
+    prompt: "summarize"
+    fixture: "The HbA1c trend is 7.8% then 7.1%, improving over six months."
+    assert:
+      - contains: "HbA1c"
+      - contains_all: ["7.8", "7.1"]
+      - regex: {pattern: '\d+(\.\d+)?\s*%'}
+      - not_contains: "I cannot"
+      - word_count: {max: 40}
+
+  - id: template-vars
+    vars: {patient: "A. Okafor", metric: "blood pressure"}
+    prompt: "Report the ${metric} for ${patient}."
+    assert:
+      - contains: "blood pressure"
+      - contains: "A. Okafor"
+
+  - id: budget-checks
+    prompt: "short answer"
+    fixture: "yes"
+    assert:
+      - iequals: "yes"
+      - one_of: ["yes", "no"]
+      - max_tokens: 10
+      - max_cost: 0.0
+      - max_latency_ms: 1000

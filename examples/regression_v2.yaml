@@ -1,0 +1,64 @@
+# v2: "let's think step by step" prompt. Fixes bad-amount (4/4 instead of 3/4)
+# but every response now carries reasoning prose, so output tokens explode.
+#
+# This is the exact tradeoff teams make by accident. See README.
+name: triage-prompt-v1          # same suite name: this is v2 OF THE SAME SUITE
+provider: echo
+models: [gpt-4o-mini]
+
+cases:
+  - id: auth-401
+    prompt: "classify step by step: 401 invalid api key"
+    fixture: |
+      Let me work through this carefully. The error message states the API key is
+      invalid, which indicates the credential presented to the gateway was either
+      revoked, mistyped, or drawn from the wrong environment. Authentication is
+      evaluated before any business logic runs, so no charge was attempted here.
+      This is a client-side configuration issue rather than a platform fault, so
+      it does not warrant escalation to the on-call engineer.
+      {"category":"auth","escalate":false}
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: auth}
+
+
+  - id: webhook-sig
+    prompt: "classify step by step: webhook signature mismatch"
+    fixture: |
+      Let me work through this carefully. A signature mismatch means the HMAC we
+      computed over the raw request body differs from the header value supplied.
+      The overwhelmingly common cause is middleware that parses and re-serializes
+      the body before verification runs, which changes the bytes and invalidates
+      the digest. The client mentioned a body-parser deployment, which fits.
+      {"category":"webhook","escalate":false}
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: webhook}
+
+
+  - id: rate-limit
+    prompt: "classify step by step: bursts of 429"
+    fixture: |
+      Let me work through this carefully. Repeated 429 responses concentrated in
+      bursts indicate the caller is exceeding the permitted request rate within a
+      sliding window. The sustained throughput described is well above the default
+      allowance, so the correct remedy is client-side backoff with jitter and
+      possibly a quota increase rather than any change on our side.
+      {"category":"rate_limit","escalate":false}
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: rate_limit}
+
+
+  - id: bad-amount
+    prompt: "classify step by step: invalid integer 12.50 on amount"
+    fixture: |
+      Let me work through this carefully. The amount field rejects 12.50 because
+      the API expects the smallest currency unit as an integer, so twelve dollars
+      and fifty cents must be submitted as 1250. The client is sending a decimal
+      value, which fails validation at the request-parsing layer before any charge
+      is created. This is a malformed request payload.
+      {"category":"payload","escalate":false}
+    assert:
+      - json_valid: true
+      - json_path: {path: category, equals: payload}
