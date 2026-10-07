@@ -92,6 +92,32 @@ def load_suite(path: str | Path) -> Suite:
         cid = str(rc.get("id") or f"case-{i + 1}")
         if "prompt" not in rc and "vars" not in rc:
             raise SuiteError(f"{p}: case {cid!r} needs `prompt` or `vars`")
+
+        fixture = rc.get("fixture")
+        fixture_file = rc.get("fixture_file")
+        if fixture is not None and fixture_file is not None:
+            raise SuiteError(
+                f"{p}: case {cid!r} sets both `fixture` and `fixture_file` — "
+                f"pick one"
+            )
+        if fixture_file is not None:
+            # Resolved relative to the suite, so a suite and the artefact it
+            # gates can live together and move together. Reading at load time
+            # means a missing or unreadable file fails the run immediately
+            # rather than looking like an assertion failure later.
+            fpath = (p.parent / str(fixture_file)).resolve()
+            try:
+                fixture = fpath.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                raise SuiteError(
+                    f"{p}: case {cid!r} fixture_file not found: {fpath}. "
+                    f"Generate it before running the suite."
+                ) from None
+            except OSError as exc:
+                raise SuiteError(
+                    f"{p}: case {cid!r} cannot read fixture_file {fpath}: {exc}"
+                ) from None
+
         cases.append(
             Case(
                 id=cid,
@@ -100,7 +126,7 @@ def load_suite(path: str | Path) -> Suite:
                 assertions=rc.get("assert") or rc.get("assertions") or [],
                 vars=rc.get("vars") or {},
                 tags=[str(t) for t in (rc.get("tags") or [])],
-                fixture=rc.get("fixture"),
+                fixture=fixture,
             )
         )
 

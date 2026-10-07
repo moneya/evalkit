@@ -306,6 +306,41 @@ root, e.g. http://host:8000/v1)
 
 See `examples/local_model.yaml`.
 
+## Gating quality metrics, not just cost
+
+`json_path` takes numeric thresholds (`gte`, `lte`, `gt`, `lt`), and a case can
+read its completion from a file your pipeline produced:
+
+```yaml
+- id: recall-at-10
+  prompt: "retrieval metrics"
+  fixture_file: ../data/metrics.json
+  assert:
+    - json_path: {path: "retrieval.recall@10", gte: 0.85}
+```
+
+That is enough to gate a RAG pipeline's retrieval quality the same way this tool
+gates cost. A worked example lives in
+[fhir-rag](https://github.com/moneya/fhir-rag/blob/main/evals/retrieval_gate.yaml),
+where a simulated regression produces:
+
+```
+FAIL  recall-at-10        json_path: retrieval.recall@10=0.61, want >= 0.85
+FAIL  sparse-answer-queries  json_path: per_query.prediabetes=0, want >= 0.9
+exit code 1
+```
+
+Two details that matter:
+
+- **Booleans are rejected, not coerced.** In Python `True >= 0.85` is True, so a
+  suite asserting a float threshold against a boolean field would silently pass
+  and the gate would be decorative. Same for numeric strings: `"0.9"` fails
+  rather than being parsed, because a field changing type is a schema change
+  worth noticing.
+- **A missing `fixture_file` fails the run, not an assertion.** "recall@10 is
+  below threshold" and "nobody generated the metrics" need different fixes, so
+  they produce different errors.
+
 ## Credentials
 
 Put keys in a `.env` file, not in a shell `export` that dies with the window:
