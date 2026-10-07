@@ -368,3 +368,53 @@ def test_live_html_404_becomes_one_actionable_line():
         assert len(msg) < 400
     finally:
         srv.shutdown()
+
+
+# -- deepseek alias -------------------------------------------------------
+
+def test_deepseek_alias_supplies_url_key_and_model():
+    from evalkit.providers import alias_defaults, effective_base_url, resolve_provider_name
+
+    d = alias_defaults("deepseek")
+    assert d["base_url"] == "https://api.deepseek.com/v1"
+    assert d["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert d["default_model"] == "deepseek-flash"
+    assert resolve_provider_name("deepseek") == "openai_compatible"
+    assert effective_base_url("deepseek", None) == "https://api.deepseek.com/v1"
+
+
+def test_deepseek_model_id_gives_an_actionable_error_not_a_generic_one():
+    """Inferring a provider from 'deepseek-flash' is impossible (it needs a
+    base_url), but the error should name the fix instead of listing all models."""
+    from evalkit.providers import ProviderError, infer_provider
+
+    with pytest.raises(ProviderError) as e:
+        infer_provider("deepseek-flash")
+    assert "provider: deepseek" in str(e.value)
+    assert "DEEPSEEK_API_KEY" in str(e.value)
+
+
+def test_providers_command_derives_alias_urls_from_one_source():
+    """`evalkit providers` must not keep its own copy of the alias URLs.
+
+    It did once, and the copy silently went stale the moment an alias was
+    added: deepseek printed 'base_url required' while real runs used the
+    correct endpoint. The listing is now derived from _ALIAS_DEFAULTS.
+    """
+    import os
+    import subprocess
+    import sys
+
+    from evalkit.providers import alias_defaults, known_aliases
+
+    out = subprocess.run(
+        [sys.executable, "-m", "evalkit.cli", "providers"],
+        capture_output=True, text=True, env={**os.environ, "NO_COLOR": "1"},
+    ).stdout
+
+    for alias in known_aliases():
+        url = alias_defaults(alias).get("base_url")
+        if url:
+            assert url in out, f"{alias}: {url} missing from `providers` output"
+        else:
+            assert f"{alias:<20} base_url required" in out, alias

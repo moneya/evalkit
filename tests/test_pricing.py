@@ -78,7 +78,13 @@ def test_metadata_keys_excluded_from_model_table():
 def test_every_entry_is_well_formed():
     for provider, models in pricing.table().items():
         for model, p in models.items():
-            assert set(p) == {"input", "output"}, f"{provider}/{model}"
+            keys = set(p)
+            assert {"input", "output"} <= keys, f"{provider}/{model}"
+            # `note` is the only optional extra: it documents what two numbers
+            # cannot, e.g. that a vendor's rate varies by time of day.
+            assert keys <= {"input", "output", "note"}, f"{provider}/{model}: {keys}"
+            if "note" in p:
+                assert isinstance(p["note"], str) and p["note"]
             assert p["input"] >= 0 and p["output"] >= 0, f"{provider}/{model}"
             if p["output"] > 0:
                 assert p["output"] >= p["input"], f"{provider}/{model}: output cheaper than input"
@@ -145,3 +151,24 @@ def test_max_cost_fails_closed_on_unpriced_model():
     r = run_assertions([{"max_cost": 0.01}], c)
     assert not r[0].passed
     assert "not in the pricing table" in r[0].detail
+
+
+def test_time_varying_prices_store_the_higher_rate():
+    """A cost gate may over-estimate safely; under-estimating passes regressions.
+
+    DeepSeek charges about 2x at peak vs off-peak. We store peak, and the note
+    must document the cheaper tier, otherwise a reader cannot tell which tier
+    the stored number represents.
+    """
+    deepseek = pricing.table()["deepseek"]
+    for model in ("deepseek-flash", "deepseek-v4-pro"):
+        entry = deepseek[model]
+        assert "off-peak" in entry["note"], f"{model} must document the cheaper tier"
+        off_peak_input = float(entry["note"].split("$")[1].split("/")[0])
+        assert entry["input"] > off_peak_input, f"{model} stored off-peak, not peak"
+
+
+def test_deepseek_models_are_priced_and_resolvable():
+    for model in ("deepseek-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"):
+        assert pricing.lookup(model) is not None, model
+        assert model in pricing.known_models("deepseek")
