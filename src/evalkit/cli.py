@@ -158,7 +158,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 def _cmd_providers(args: argparse.Namespace) -> int:
     from .assertions import available
-    from .providers import default_model_for
+    from .providers import alias_defaults, default_model_for
 
     from .providers import known_aliases, known_providers
 
@@ -168,20 +168,19 @@ def _cmd_providers(args: argparse.Namespace) -> int:
         print(f"  {name:<20} default model: {dm}")
 
     print("\naliases (all map to openai_compatible, most with a default base_url)")
-    alias_hints = {
-        "vllm": "http://localhost:8000/v1",
-        "ollama": "http://localhost:11434/v1",
-        "lmstudio": "http://localhost:1234/v1",
-        "lm_studio": "http://localhost:1234/v1",
-        "llamacpp": "http://localhost:8080/v1",
-        "openrouter": "https://openrouter.ai/api/v1 (OPENROUTER_API_KEY)",
-        "together": "https://api.together.xyz/v1 (TOGETHER_API_KEY)",
-        "groq": "https://api.groq.com/openai/v1 (GROQ_API_KEY)",
-        "fireworks": "https://api.fireworks.ai/inference/v1 (FIREWORKS_API_KEY)",
-        "deepinfra": "https://api.deepinfra.com/v1/openai (DEEPINFRA_API_KEY)",
-    }
+    # Derived from _ALIAS_DEFAULTS, never hand-maintained: a second copy of this
+    # list drifts the moment a provider is added, and prints a confident lie.
     for alias in sorted(known_aliases()):
-        hint = alias_hints.get(alias, "base_url required")
+        d = alias_defaults(alias)
+        url = d.get("base_url")
+        if not url:
+            hint = "base_url required"
+        else:
+            key_env = d.get("api_key_env")
+            model = d.get("default_model")
+            hint = url + (f" ({key_env})" if key_env else "")
+            if model:
+                hint += f"  default model: {model}"
         print(f"  {alias:<20} {hint}")
     print("\nassertions")
     for a in available():

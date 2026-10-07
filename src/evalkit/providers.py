@@ -414,6 +414,7 @@ _ALIASES: dict[str, str] = {
     "lmstudio": "openai_compatible",
     "lm_studio": "openai_compatible",
     "llamacpp": "openai_compatible",
+    "deepseek": "openai_compatible",
     "openrouter": "openai_compatible",
     "together": "openai_compatible",
     "groq": "openai_compatible",
@@ -429,6 +430,11 @@ _ALIAS_DEFAULTS: dict[str, dict[str, str]] = {
     "lmstudio": {"base_url": "http://localhost:1234/v1"},
     "lm_studio": {"base_url": "http://localhost:1234/v1"},
     "llamacpp": {"base_url": "http://localhost:8080/v1"},
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "default_model": "deepseek-flash",
+    },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "api_key_env": "OPENROUTER_API_KEY",
@@ -531,6 +537,16 @@ def infer_provider(model: str) -> str:
     for provider in ("anthropic", "openai", "echo"):
         if lookup(model, provider) is not None:
             return provider
+
+    # DeepSeek is OpenAI-shaped but needs its own base_url, so it is a priced
+    # alias rather than an inferable provider: tell the user exactly what to set
+    # instead of letting it fall through to the generic error.
+    if lookup(model, "deepseek") is not None:
+        raise ProviderError(
+            f"model {model!r} is DeepSeek. Set `provider: deepseek` in the suite "
+            f"(or pass --provider deepseek); it supplies the base_url and reads "
+            f"DEEPSEEK_API_KEY."
+        )
 
     m = model.lower()
     if m.startswith("claude"):
