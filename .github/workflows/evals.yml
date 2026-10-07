@@ -46,6 +46,14 @@ jobs:
           .venv/bin/evalkit run examples/local_model.yaml \
             --base-url http://127.0.0.1:8731/v1
 
+      - name: no .env committed
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "::error::.env is tracked — credentials must never be committed"; exit 1
+          fi
+          test -f .env.example || { echo "::error::.env.example missing"; exit 1; }
+          echo "no .env tracked; .env.example present"
+
       - name: pricing table freshness
         run: .venv/bin/python scripts/check_pricing_freshness.py --max-age-days 60
 

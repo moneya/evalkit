@@ -306,6 +306,42 @@ root, e.g. http://host:8000/v1)
 
 See `examples/local_model.yaml`.
 
+## Credentials
+
+Put keys in a `.env` file, not in a shell `export` that dies with the window:
+
+```bash
+cp .env.example .env
+$EDITOR .env          # fill in only what you use
+```
+
+```bash
+# .env
+DEEPSEEK_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+evalkit loads the nearest `.env` at or above the working directory, so it works
+from a subdirectory the way `git` does. `.env` is gitignored; `.env.example`
+documents the variable names and is committed.
+
+**The real environment always wins.** A value already set in the environment is
+never overwritten by the file, so both of these still take precedence:
+
+```bash
+DEEPSEEK_API_KEY=sk-other evalkit run evals/triage.yaml   # inline wins
+# and in CI, ${{ secrets.DEEPSEEK_API_KEY }} beats any checked-out .env
+```
+
+| Flag / variable | Effect |
+|---|---|
+| `--env-file PATH` | load a specific file instead of searching |
+| `--no-env-file` | ignore `.env` entirely, use only the real environment |
+| `EVALKIT_DEBUG=1` | print which variables were loaded — **names only, never values** |
+
+No key is needed for the offline `echo` provider, or for self-hosted servers
+like Ollama and vLLM.
+
 ## Validate before you spend
 
 A run against a hosted model costs money and minutes. Most suite mistakes are
@@ -459,6 +495,9 @@ worse than a date check that tells a human to look.
   readable.
 - **Cases are keyed `case_id@model`**, so running two models produces two
   independently gated data points.
+- **Keys come from `.env`, and the environment outranks it.** A gitignored file
+  beats a shell export that vanishes; CI secrets must still beat a local file,
+  or a stale checkout would silently run against the wrong account.
 - **Validation runs before any request.** A typo should cost zero dollars to
   find, so `run` preflights the suite and refuses to start if it has errors.
 - **No LLM-as-judge in v1.** Deterministic assertions only. A grader you can't

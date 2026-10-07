@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from . import __version__
 from .compare import compare, load_run
+from .env import find_env_file, load_env
 from .providers import dump_pricing
 from .report import comparison_report, line_for, summary
 from .runner import SuiteError, check_thresholds, load_suite, run_suite
@@ -159,7 +161,6 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 def _cmd_providers(args: argparse.Namespace) -> int:
     from .assertions import available
     from .providers import alias_defaults, default_model_for
-
     from .providers import known_aliases, known_providers
 
     print("providers")
@@ -259,6 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="evalkit",
         description="Prompt and agent evals where cost regressions fail the build.",
     )
+    p.add_argument("--env-file", metavar="PATH",
+                   help="explicit .env path (default: nearest .env at or above cwd)")
+    p.add_argument("--no-env-file", action="store_true",
+                   help="ignore .env entirely and use only the real environment")
     p.add_argument("--version", action="version", version=f"evalkit {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -324,6 +329,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Load .env before any command reads a key. The real environment wins, so an
+    # inline KEY=... or a CI secret still beats a stale local file.
+    if not getattr(args, "no_env_file", False):
+        loaded = load_env(getattr(args, "env_file", None))
+        if loaded and os.environ.get("EVALKIT_DEBUG"):
+            print(f"  loaded {len(loaded)} var(s) from .env: {', '.join(sorted(loaded))}",
+                  file=sys.stderr)
     try:
         return args.fn(args)
     except KeyboardInterrupt:
