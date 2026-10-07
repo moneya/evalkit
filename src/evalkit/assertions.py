@@ -197,6 +197,27 @@ def _json_path(spec: Any, c: Completion) -> AssertionResult:
     if "contains" in spec:
         hit = str(spec["contains"]).lower() in str(val).lower()
         return _ok("json_path", hit, "" if hit else f"{path}={val!r} lacks {spec['contains']!r}")
+    # Numeric comparisons. Quality metrics are thresholds, not equalities:
+    # "recall@10 >= 0.85" is the assertion a retrieval gate actually needs, and
+    # without these it can only be faked with brittle string matching.
+    for op, symbol, compare in (
+        ("gte", ">=", lambda a, b: a >= b),
+        ("lte", "<=", lambda a, b: a <= b),
+        ("gt", ">", lambda a, b: a > b),
+        ("lt", "<", lambda a, b: a < b),
+    ):
+        if op in spec:
+            want = float(spec[op])
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                return _ok(
+                    "json_path", False,
+                    f"{path}={val!r} is not a number, so {op} cannot be checked",
+                )
+            hit = compare(float(val), want)
+            return _ok(
+                "json_path", hit,
+                "" if hit else f"{path}={val:g}, want {symbol} {want:g}",
+            )
     if "exists" in spec:
         want = bool(spec["exists"])
         return _ok("json_path", want, "" if want else f"{path} exists but should not")

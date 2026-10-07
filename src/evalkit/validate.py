@@ -34,7 +34,11 @@ INFO = "info"
 
 # Assertions whose spec must be a mapping, and the keys each accepts.
 _MAPPING_ASSERTIONS: dict[str, set[str]] = {
-    "json_path": {"path", "equals", "contains", "exists"},
+    "json_path": {
+        "path", "equals", "contains", "exists",
+        # Numeric thresholds, for gating quality metrics like recall@10.
+        "gte", "lte", "gt", "lt",
+    },
     "word_count": {"min", "max"},
 }
 _LIST_ASSERTIONS = {"contains_all", "contains_any", "one_of", "json_keys"}
@@ -222,10 +226,13 @@ def _check_assertion_shape(at: str, kind: str, body: Any) -> list[Finding]:
             ))
         if kind == "json_path" and "path" not in body:
             out.append(Finding(ERROR, at, "json_path requires a `path`"))
-        if kind == "json_path" and len(set(body) & {"equals", "contains", "exists"}) == 0:
+        if kind == "json_path" and len(
+            set(body) & {"equals", "contains", "exists", "gte", "lte", "gt", "lt"}
+        ) == 0:
             out.append(Finding(
                 WARNING, at,
-                "json_path has no equals/contains/exists, so it only checks presence",
+                "json_path has no equals/contains/exists/gte/lte/gt/lt, so it "
+                "only checks presence",
             ))
         if kind == "word_count" and not (set(body) & {"min", "max"}):
             out.append(Finding(ERROR, at, "word_count needs `min` and/or `max`"))
